@@ -131,20 +131,69 @@ Add `resolve_synthesis(config) -> SynthesisConfig` in `openkb/config.py`, mirror
 - Per-file atomic writes; a failed/again-run `enrich` never corrupts leaves.
 - Staleness via `source_hash` keeps re-runs cheap and correct.
 
-## Testing (mirror the existing tiers)
+## Testing (mirror the existing four-tier strategy in full)
 
-- **Tier 1 unit:** `resolve_synthesis` parsing; synth frontmatter/format + tags;
-  `source_hash` staleness; `_read_leaves` excludes `*.synth.md`.
-- **Tier 2 integration (fake LLM):** `enrich` CLI creates paired files; grounded
-  leaf is **byte-identical** after; verifier drops a planted contradiction;
-  `enrich`→`distill` builds the hierarchy over grounded leaves only. Extend
-  `tests/support/fake_llm.py` with `synthesize` / `synth-verify` routes.
-- **Tier 3 real-LLM eval (opt-in):** usefulness + faithfulness of elaboration;
-  measured **hallucination rate** (a planted unsupported claim must be caught);
-  provenance-tag correctness. Reports under `tests/reports/`.
-- **Tier 4 regression pins:** (a) enrich never mutates a grounded leaf;
-  (b) a contradicting inferred claim is dropped; (c) stale synth is regenerated;
-  (d) distill ignores `*.synth.md`.
+Reuses the existing scaffolding: the `llm` / `integration` / `regression` markers
+and `addopts = "-m 'not llm'"` are already registered in `pyproject.toml`, and CI
+(`.github/workflows/test.yml`) already runs the non-`llm` suite. Tier 1/2/4 run in
+CI; Tier 3 is `@pytest.mark.llm`, opt-in, never in CI.
+
+**Fixtures.** Reuse `tests/support/eval_corpus.py` (the grounded concept set) for
+the Tier-3 corpus; add a tiny committed grounded-concept fixture for Tier-2.
+Extend `tests/support/fake_llm.py` with deterministic `synthesize` and
+`synth-verify` routes (verify route returns a fixed supported/inferred/contradicts
+verdict per claim, including one planted contradiction).
+
+**Tier 1 — unit (`test_synthesis_*.py`)**
+- `resolve_synthesis` parsing: defaults when absent, each key parses, invalid
+  values fall back with a warning, `include_world_knowledge=false` disables the
+  inferred block (mirror `resolve_hierarchy` tests).
+- synth-file writer: frontmatter keys (`type`/`source_concept`/`source_hash`/
+  `provenance`/`verified`/`sections`), section rendering, `> [!inferred]` tagging.
+- `source_hash` staleness: matching hash → skip, mismatch/missing → regenerate.
+- `topic_tree._read_leaves` excludes `*.synth.md` (so synth never becomes a leaf).
+
+**Tier 2 — integration, fake LLM (`test_synthesis_integration.py`)**
+- `openkb enrich` CLI creates one `foo.synth.md` per grounded concept.
+- grounded leaf is **byte-identical** after enrich (diff == empty).
+- verifier drops a planted contradicting claim; keeps supported + tags inferred.
+- idempotent re-enrich: unchanged concepts skipped via `source_hash`; `--force`
+  regenerates.
+- `enrich` → `distill` builds the hierarchy over **grounded leaves only** (synth
+  files absent from the tree; concept count unchanged).
+- `remove` of a grounded concept also deletes its `foo.synth.md`.
+- lint: synth `[[wikilinks]]` resolve; synth files are excluded from the orphan
+  and missing-from-index checks.
+- query agent (fake): surfaces the paired synth and preserves `> [!inferred]`.
+- **Golden snapshot:** canonical structure of a synth file (frontmatter keys +
+  section headings, prose excluded) under `tests/golden/`, with the
+  `OPENKB_UPDATE_GOLDEN=1` refresh mechanism.
+
+**Tier 3 — real-LLM eval, opt-in (`test_synthesis_eval.py`), Groups A/B/C**
+- **A structural (hard):** every grounded leaf has a paired synth; required
+  frontmatter present; `verified: true`; inferred items are tagged; synth links
+  resolve. Deterministic pass/fail even with a real model.
+- **B quality (LLM-as-judge, thresholded → report):** usefulness and
+  faithfulness of the elaboration; tag correctness (are "inferred" items truly
+  beyond the sources, and is nothing load-bearing left untagged). Scores to
+  `tests/reports/synthesis_quality.json`.
+- **C hallucination (the real risk test):** measured hallucination rate — planted
+  unsupported claims MUST be caught and dropped by the verifier; report
+  false-negative rate to `tests/reports/synthesis_halluc.json`. Include a
+  planted "obviously unsupported" set as a verifier-reliability guard so an
+  over-lenient verifier is detectable.
+
+**Tier 4 — regression pins**
+- (a) enrich never mutates a grounded leaf (byte-identical).
+- (b) a contradicting inferred claim is dropped.
+- (c) stale synth (source_hash mismatch) is regenerated on next enrich.
+- (d) `distill` ignores `*.synth.md`.
+- (e) removing a grounded concept removes its paired synth (no orphan synth).
+- (f) synth `[[wikilinks]]` resolve and synth files are not flagged as orphan
+  concepts by lint.
+
+Optional: a coverage floor (`--cov-fail-under`) once `pytest-cov` is added, same
+as noted for the base testing plan.
 
 ## Risks & mitigations
 - **Hallucination** → provenance tags + verify pass + drop-on-contradiction +
