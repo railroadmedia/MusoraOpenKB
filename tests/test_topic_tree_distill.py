@@ -176,6 +176,37 @@ def test_sideways_links_bidirectional_same_layer_bounded(tmp_path):
             assert name in (nodes[peer].get("related") or [])  # bidirectional
 
 
+def test_no_redundant_single_child_internal_nodes(tmp_path):
+    """A clusterer that keeps producing a single group builds single-child wrapper
+    layers; distill must collapse them so no internal node has exactly one
+    (topic) child, while still preserving every concept and a single root."""
+    root = tmp_path / "concepts"
+    stems = _flat(root, 12)
+
+    def single_group(items):  # always one group -> would nest 1-child layers
+        return {"only": [s for s, _ in items]}
+
+    stats = tt.distill(root, cluster=single_group, summarize=summarize, max_depth=6)
+    assert _concept_stems(root) == stems           # nothing lost
+    assert (root / tt.TOPIC_FILE).is_file()         # single root survives
+    # no topic dir contains exactly one subtopic-and-nothing-else
+    for d in [root, *[p for p in root.rglob("*") if p.is_dir()]]:
+        subtopics = [c for c in d.iterdir() if c.is_dir()]
+        concepts = [c for c in d.glob("*.md") if c.name != tt.TOPIC_FILE]
+        if len(subtopics) == 1 and not concepts:
+            raise AssertionError(f"redundant single-child wrapper at {d}")
+
+
+def test_collapse_keeps_topic_with_single_concept_leaf(tmp_path):
+    """A topic whose only child is a concept LEAF is kept (not collapsed to a bare
+    leaf) so the >= 2-layer invariant and a real root summary survive."""
+    root = tmp_path / "concepts"
+    _flat(root, 1)
+    stats = tt.distill(root, cluster=chunk_cluster(3), summarize=summarize)
+    assert stats["layers"] >= 2
+    assert (root / tt.TOPIC_FILE).is_file()
+
+
 def test_sideways_disabled_when_no_relate(tmp_path):
     root = tmp_path / "concepts"
     _flat(root, 15)

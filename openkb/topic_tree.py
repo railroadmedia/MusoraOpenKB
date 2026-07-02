@@ -472,6 +472,37 @@ def _tree_layers(node: _DistillNode) -> int:
     return 1 + max(_tree_layers(c) for c in node.children)
 
 
+def _collapse_single_child(node: _DistillNode) -> _DistillNode:
+    """Collapse redundant single-child internal nodes bottom-up: a node whose only
+    child is itself an internal (topic) node is a wasted layer that just restates
+    that child, so it is replaced by the child. Never collapses a node down to a
+    bare leaf (a topic with a single concept leaf is kept), so the root always
+    retains children and the >= 2-layer invariant holds."""
+    node.children = [_collapse_single_child(c) for c in node.children]
+    while len(node.children) == 1 and not node.children[0].is_leaf:
+        node = node.children[0]
+    return node
+
+
+def _internal_names(node: _DistillNode) -> set[str]:
+    if node.is_leaf:
+        return set()
+    names = {node.name}
+    for c in node.children:
+        names |= _internal_names(c)
+    return names
+
+
+def _prune_related(node: _DistillNode, valid: set[str]) -> None:
+    """Drop any sideways ``related`` link that no longer resolves to an existing
+    node (e.g. a peer that was collapsed away) so no ghost links remain."""
+    if node.is_leaf:
+        return
+    node.related = [r for r in node.related if r in valid and r != node.name]
+    for c in node.children:
+        _prune_related(c, valid)
+
+
 def distill(
     concepts_root: Path,
     *,
@@ -530,6 +561,11 @@ def distill(
             children=list(current),
             brief="",
         )
+
+    # Remove redundant single-child wrapper layers, then repair sideways links
+    # so none point at a node that was collapsed away.
+    root = _collapse_single_child(root)
+    _prune_related(root, _internal_names(root))
 
     # Materialize into staging, then atomically swap for the current contents.
     staging = concepts_root.parent / f".{concepts_root.name}.distill"
