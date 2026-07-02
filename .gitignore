@@ -15,6 +15,9 @@ wiki/
 .openkb/
 output/
 
+# Eval reports (real-LLM test artifacts)
+tests/reports/
+
 # Local only
 docs/
 .claude/
