@@ -10,6 +10,21 @@ Two conceptual layers:
 - **Wiki foundation** — compiles and maintains the knowledge (`init`, `add`, `recompile`, `remove`, `list`, `status`, `watch`, `lint`).
 - **Generators** — turn the compiled wiki into output (`query`, `chat`, `visualize`, `skill`, `deck`).
 
+### Hierarchical distillation (experimental, `topic_tree: true`)
+A second pass builds a multi-layer navigable hierarchy over the flat concept
+leaves. Two engines live in `openkb/topic_tree.py`:
+- `bootstrap()` (`openkb reindex`) — top-down cold-start seed.
+- `distill()` (`openkb distill`) — **bottom-up RAPTOR-style distillation** (the
+  intended approach): clusters concepts into LLM-named, `AGENTS.md`-guided,
+  sized categories, summarizes each into a parent *pathway* node (`_topic.md`
+  with `layer`/`children`/`related` frontmatter), adds bidirectional **sideways
+  links** between same-layer peers, and repeats up to a single root. Sizing is
+  configured under a `hierarchy:` block (see `openkb/config.py::resolve_hierarchy`
+  and `docs/smart-hierarchy-distillation-plan.md`). Leaf concept files are the
+  source of truth; the tree is built in a staging dir and atomically swapped in,
+  so a mid-build LLM failure never loses concepts. LLM callables live in
+  `openkb/topic_tree_llm.py` (`make_distill_cluster`/`make_distill_summarize`/`make_relate`).
+
 ## Commands
 
 This project uses `uv` (see `uv.lock`). Dev dependencies (`pytest`, `pytest-asyncio`) are in the `dev` extra.

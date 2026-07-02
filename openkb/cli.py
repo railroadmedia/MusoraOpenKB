@@ -10,6 +10,7 @@ warnings.filterwarnings("ignore")
 import asyncio
 import json
 import logging
+import re
 import shutil
 import sys
 import time
@@ -45,14 +46,15 @@ from openkb.agent.compiler import compile_long_doc
 from openkb.config import (
     DEFAULT_CONFIG, load_config, save_config, load_global_config, register_kb,
     resolve_extra_headers, set_extra_headers, resolve_timeout, set_timeout,
-    resolve_litellm_settings,
+    resolve_litellm_settings, resolve_hierarchy,
 )
 from openkb.converter import _registry_path, convert_document
 from openkb.indexer import import_cloud_document
 from openkb.locks import atomic_write_json, atomic_write_text, kb_ingest_lock, kb_read_lock
 from openkb.log import append_log
-from openkb.schema import AGENTS_MD, INDEX_SEED, PAGE_CONTENT_DIRS
+from openkb.schema import AGENTS_MD, INDEX_SEED, PAGE_CONTENT_DIRS, get_agents_md
 from openkb.topic_tree import bootstrap as tt_bootstrap
+from openkb.topic_tree import distill as tt_distill
 
 # Suppress warnings after all imports — markitdown overrides filters at import time
 import warnings
@@ -1722,6 +1724,67 @@ def reindex(ctx):
             summarize=make_summarize(model),
         )
     click.echo(f"Reindexed {n} concept(s) into the topic tree.")
+
+
+def _hierarchy_guidance(wiki_dir) -> str:
+    """Extract the ``## Hierarchy`` section from wiki/AGENTS.md (its body up to
+    the next heading). Falls back to empty so prompts stay generic if unset."""
+    text = get_agents_md(wiki_dir)
+    m = re.search(r"^##\s+Hierarchy\s*\n(.*?)(?=\n##\s|\Z)", text, re.DOTALL | re.MULTILINE)
+    return m.group(1).strip() if m else ""
+
+
+@cli.command()
+@click.pass_context
+def distill(ctx):
+    """Distil the flat concept leaves into a bottom-up pathway hierarchy (Pass 2).
+
+    RAPTOR-style: clusters concepts into LLM-named, AGENTS.md-guided categories,
+    summarizes each into a parent pathway node, links peers sideways, and repeats
+    up to a single root. Leaf files stay the source of truth (atomic rebuild).
+    No-op unless `topic_tree: true` is set in .openkb/config.yaml.
+    """
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    if not bool(config.get("topic_tree", False)):
+        click.echo(
+            "topic_tree is not enabled. Set `topic_tree: true` in "
+            ".openkb/config.yaml first."
+        )
+        return
+    _setup_llm_key(kb_dir)
+    model = config.get("model", DEFAULT_CONFIG["model"])
+    h = resolve_hierarchy(config)
+    guidance = _hierarchy_guidance(kb_dir / "wiki")
+    from openkb.topic_tree_llm import (
+        make_distill_cluster, make_distill_summarize, make_relate,
+    )
+
+    relate = make_relate(model, guidance=guidance, k=h.sideways_links_max) \
+        if h.sideways_links else None
+    concepts_root = kb_dir / "wiki" / "concepts"
+    with kb_ingest_lock(kb_dir / ".openkb"):
+        stats = tt_distill(
+            concepts_root,
+            cluster=make_distill_cluster(
+                model, guidance=guidance, target_fanout=h.target_fanout,
+                min_fanout=h.min_fanout, max_fanout=h.max_fanout),
+            summarize=make_distill_summarize(model, guidance=guidance),
+            relate=relate,
+            target_fanout=h.target_fanout,
+            min_fanout=h.min_fanout,
+            max_fanout=h.max_fanout,
+            max_depth=h.max_depth,
+            sideways_links_max=h.sideways_links_max,
+            summary_hard_cap=h.node_summary_hard_cap,
+        )
+    click.echo(
+        f"Distilled {stats['leaves']} concept(s) into a {stats['layers']}-layer "
+        f"hierarchy ({stats['nodes']} nodes)."
+    )
 
 
 @cli.command()

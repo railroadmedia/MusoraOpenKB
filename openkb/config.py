@@ -4,6 +4,7 @@ import contextlib
 import logging
 import math
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -94,6 +95,114 @@ def resolve_entity_types(config: dict) -> list[str]:
     if "other" not in cleaned:
         cleaned.append("other")
     return cleaned
+
+
+@dataclass(frozen=True)
+class HierarchyConfig:
+    """Effective sizing/behavior settings for bottom-up ``distill`` (Pass 2).
+
+    Depth is *dynamic* — it falls out of ``target_fanout`` and the leaf count —
+    so ``max_depth`` is only a safety backstop. The two invariants (always one
+    root file, always >= 2 layers) are enforced in the engine, not here.
+    """
+    target_fanout: int = 8
+    min_fanout: int = 4
+    max_fanout: int = 12
+    max_depth: int = 6
+    node_summary_tokens: int = 600      # soft target for each pathway summary
+    node_summary_hard_cap: int = 1000   # hard cap
+    sideways_links: bool = True
+    sideways_links_max: int = 5
+    sideways_method: str = "llm"        # "llm" | "embedding"
+
+
+DEFAULT_HIERARCHY = HierarchyConfig()
+_VALID_SIDEWAYS_METHODS = frozenset({"llm", "embedding"})
+
+
+def _pos_int(raw: dict, key: str, default: int) -> int:
+    """Read a positive int from a mapping, warning + defaulting on bad values."""
+    if key not in raw:
+        return default
+    val = raw[key]
+    if isinstance(val, bool) or not isinstance(val, int) or val <= 0:
+        logger.warning(
+            "config: 'hierarchy.%s' must be a positive integer, got %r — "
+            "using default %d.", key, val, default,
+        )
+        return default
+    return val
+
+
+def resolve_hierarchy(config: dict) -> HierarchyConfig:
+    """Resolve the optional ``hierarchy:`` config block into a HierarchyConfig.
+
+    Absent or non-mapping → all defaults (byte-identical behavior). Each key is
+    validated independently and falls back to its default with a warning. The
+    fan-out band is repaired to satisfy ``min_fanout <= target_fanout <=
+    max_fanout``; if the supplied values invert that ordering the whole band
+    falls back to defaults (a partial repair would silently change intent).
+    """
+    raw = config.get("hierarchy")
+    if raw is None:
+        return DEFAULT_HIERARCHY
+    if not isinstance(raw, dict):
+        logger.warning(
+            "config: 'hierarchy' must be a mapping, got %s — using defaults.",
+            type(raw).__name__,
+        )
+        return DEFAULT_HIERARCHY
+
+    d = DEFAULT_HIERARCHY
+    target = _pos_int(raw, "target_fanout", d.target_fanout)
+    lo = _pos_int(raw, "min_fanout", d.min_fanout)
+    hi = _pos_int(raw, "max_fanout", d.max_fanout)
+    if not (lo <= target <= hi):
+        logger.warning(
+            "config: hierarchy fan-out band must satisfy min <= target <= max "
+            "(got min=%s target=%s max=%s) — falling back to defaults %s/%s/%s.",
+            lo, target, hi, d.min_fanout, d.target_fanout, d.max_fanout,
+        )
+        lo, target, hi = d.min_fanout, d.target_fanout, d.max_fanout
+
+    summary_tokens = _pos_int(raw, "node_summary_tokens", d.node_summary_tokens)
+    hard_cap = _pos_int(raw, "node_summary_hard_cap", d.node_summary_hard_cap)
+    if hard_cap < summary_tokens:
+        logger.warning(
+            "config: 'hierarchy.node_summary_hard_cap' (%d) < node_summary_tokens "
+            "(%d) — raising the cap to the target.", hard_cap, summary_tokens,
+        )
+        hard_cap = summary_tokens
+
+    sideways = raw.get("sideways_links", d.sideways_links)
+    if not isinstance(sideways, bool):
+        logger.warning(
+            "config: 'hierarchy.sideways_links' must be a boolean, got %r — "
+            "using default %s.", sideways, d.sideways_links,
+        )
+        sideways = d.sideways_links
+
+    method = raw.get("sideways_method", d.sideways_method)
+    if not isinstance(method, str) or method.strip().lower() not in _VALID_SIDEWAYS_METHODS:
+        logger.warning(
+            "config: 'hierarchy.sideways_method' must be one of %s, got %r — "
+            "using default %r.", sorted(_VALID_SIDEWAYS_METHODS), method, d.sideways_method,
+        )
+        method = d.sideways_method
+    else:
+        method = method.strip().lower()
+
+    return HierarchyConfig(
+        target_fanout=target,
+        min_fanout=lo,
+        max_fanout=hi,
+        max_depth=_pos_int(raw, "max_depth", d.max_depth),
+        node_summary_tokens=summary_tokens,
+        node_summary_hard_cap=hard_cap,
+        sideways_links=sideways,
+        sideways_links_max=_pos_int(raw, "sideways_links_max", d.sideways_links_max),
+        sideways_method=method,
+    )
 
 
 def resolve_extra_headers(config: dict) -> dict[str, str]:

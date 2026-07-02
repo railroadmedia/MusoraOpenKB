@@ -27,7 +27,7 @@ def fake_llm_call(model, messages, step_name, **kwargs):
     """Drop-in replacement for ``compiler._llm_call``."""
     prompt = messages[-1]["content"] if messages else ""
 
-    if step_name == "topic-cluster":
+    if step_name in ("topic-cluster", "distill-cluster"):
         stems = _stems(prompt)
         half = len(stems) // 2 or len(stems)
         groups = {}
@@ -37,11 +37,25 @@ def fake_llm_call(model, messages, step_name, **kwargs):
             groups["group-b"] = stems[half:]
         return json.dumps({"groups": groups})
 
-    if step_name == "topic-summary":
+    if step_name in ("topic-summary", "distill-summary"):
         # summarize(name, briefs) — the name is quoted in the prompt.
         m = re.search(r'subtopic "([^"]+)"', prompt)
         name = m.group(1) if m else "topic"
         return f"summary of {name}"
+
+    if step_name == "distill-relate":
+        # Adjacency: link each node to its neighbors in listing order.
+        names = _stems(prompt)
+        related = {}
+        for i, n in enumerate(names):
+            peers = []
+            if i > 0:
+                peers.append(names[i - 1])
+            if i + 1 < len(names):
+                peers.append(names[i + 1])
+            if peers:
+                related[n] = peers
+        return json.dumps({"related": related})
 
     if step_name == "topic-choose":
         return json.dumps({"pick": None})  # keep at current node

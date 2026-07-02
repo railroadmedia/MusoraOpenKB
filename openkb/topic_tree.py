@@ -255,3 +255,287 @@ def bootstrap(
         child.replace(dest)
     shutil.rmtree(staging, ignore_errors=True)
     return placed
+
+
+# ---------------------------------------------------------------------------
+# Bottom-up distillation (Pass 2) — RAPTOR-style. See
+# docs/smart-hierarchy-distillation-plan.md.
+#
+# Distill builds the hierarchy UPWARD from the flat concept leaves: cluster the
+# current layer into LLM-named, sized categories, summarize each category into a
+# parent pathway node, link peers sideways, and repeat until a single root
+# remains. Leaf concept files are the source of truth and are only replaced once
+# the whole tree builds successfully (atomic staging swap).
+# ---------------------------------------------------------------------------
+
+RelateFn = Callable[[list[tuple[str, str]]], dict[str, list[str]]]
+
+
+@dataclass
+class _DistillNode:
+    name: str
+    summary: str
+    children: list["_DistillNode"] = field(default_factory=list)
+    content: Optional[str] = None  # leaf file body; None for internal nodes
+    brief: str = ""                # one-line brief shown in a parent's child index
+    related: list[str] = field(default_factory=list)
+
+    @property
+    def is_leaf(self) -> bool:
+        return not self.children
+
+
+def _slug(name: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", str(name).strip().lower()).strip("-")
+    return s or "topic"
+
+
+def _unique_name(base: str, used: set[str]) -> str:
+    base = _slug(base)
+    if base not in used:
+        used.add(base)
+        return base
+    i = 2
+    while f"{base}-{i}" in used:
+        i += 1
+    name = f"{base}-{i}"
+    used.add(name)
+    return name
+
+
+def _truncate_words(text: str, cap: int) -> str:
+    words = text.split()
+    if len(words) <= cap:
+        return text
+    return " ".join(words[:cap]).rstrip() + " …"
+
+
+def _first_sentence(text: str, limit: int = 160) -> str:
+    text = " ".join(text.split())
+    m = re.search(r"(.+?[.!?])(\s|$)", text)
+    brief = m.group(1) if m else text
+    return brief if len(brief) <= limit else brief[: limit - 1].rstrip() + "…"
+
+
+def _read_leaves(concepts_root: Path) -> list[_DistillNode]:
+    """All concept leaves anywhere under the root (so re-distill rebuilds from
+    an existing tree too), deterministic by relative path."""
+    leaves = []
+    for p in sorted(concepts_root.rglob("*.md"), key=lambda x: str(x).lower()):
+        if p.name == TOPIC_FILE:
+            continue
+        brief = _brief(p)
+        leaves.append(_DistillNode(
+            name=p.stem, summary=brief or p.stem,
+            content=p.read_text(encoding="utf-8"), brief=brief,
+        ))
+    return leaves
+
+
+def write_pathway_md(
+    node_dir: Path,
+    summary: str,
+    layer: int,
+    children: list[tuple[str, str, bool]],  # (name, brief, is_topic)
+    related: list[str],
+    *,
+    title: Optional[str] = None,
+) -> None:
+    """Write a pathway node: frontmatter (layer/children/related) + distilled
+    summary + a linked child index + a related-pathways section.
+
+    ``title`` overrides the heading (the root is materialized in a staging dir
+    whose name must not leak into the heading — pass the logical node name)."""
+    node_dir.mkdir(parents=True, exist_ok=True)
+    fm = yaml.safe_dump(
+        {
+            "type": "topic",
+            "layer": int(layer),
+            "size": len(children),
+            "summary": summary,
+            "children": [c[0] for c in children],
+            "related": list(related),
+        },
+        sort_keys=False,
+        allow_unicode=True,
+    ).strip()
+    heading = title or node_dir.name or "root"
+    parts = [f"---\n{fm}\n---\n", f"# {heading}\n", summary, ""]
+    if children:
+        parts.append("## Contents\n")
+        for name, brief, _is_topic in children:
+            parts.append(f"- [[{name}]]" + (f" — {brief}" if brief else ""))
+        parts.append("")
+    if related:
+        parts.append("## Related pathways\n")
+        for r in related:
+            parts.append(f"- [[{r}]]")
+        parts.append("")
+    atomic_write_text(node_dir / TOPIC_FILE, "\n".join(parts).rstrip() + "\n")
+
+
+def _build_parent_layer(
+    nodes: list[_DistillNode],
+    cluster: ClusterFn,
+    summarize: SummarizeFn,
+    used: set[str],
+    cap: Callable[[str], str],
+) -> list[_DistillNode]:
+    """Cluster ``nodes`` into named categories and summarize each into a parent.
+    Any node the clusterer drops is collected into a ``misc`` parent so nothing
+    is ever lost."""
+    by_name = {n.name: n for n in nodes}
+    groups = cluster([(n.name, n.brief or n.summary) for n in nodes])
+    parents: list[_DistillNode] = []
+    seen: set[str] = set()
+    for cat, members in groups.items():
+        kept = [by_name[m] for m in members if m in by_name and m not in seen]
+        if not kept:
+            continue
+        seen.update(m.name for m in kept)
+        name = _unique_name(cat, used)
+        summary = cap(summarize(name, [m.summary for m in kept]))
+        parents.append(_DistillNode(
+            name=name, summary=summary, children=kept, brief=_first_sentence(summary),
+        ))
+    leftovers = [n for n in nodes if n.name not in seen]
+    if leftovers:
+        name = _unique_name("misc", used)
+        summary = cap(summarize(name, [m.summary for m in leftovers]))
+        parents.append(_DistillNode(
+            name=name, summary=summary, children=leftovers, brief=_first_sentence(summary),
+        ))
+    return parents
+
+
+def _link_sideways(parents: list[_DistillNode], relate: Optional[RelateFn], k: int) -> None:
+    """Add bidirectional, same-layer ``related`` links (top-K per node)."""
+    if relate is None or k <= 0 or len(parents) < 2:
+        return
+    by_name = {p.name: p for p in parents}
+    names = set(by_name)
+    rel = relate([(p.name, p.summary) for p in parents]) or {}
+    pairs: set[frozenset] = set()
+    for a, others in rel.items():
+        if a not in names:
+            continue
+        for b in others or []:
+            if b in names and b != a:
+                pairs.add(frozenset((a, b)))
+    # Only add a pair when BOTH endpoints have room, keeping links strictly
+    # bidirectional and each node's list <= k. Deterministic order.
+    for pair in sorted(pairs, key=lambda s: sorted(s)):
+        a, b = sorted(pair)
+        if b in by_name[a].related:
+            continue
+        if len(by_name[a].related) < k and len(by_name[b].related) < k:
+            by_name[a].related.append(b)
+            by_name[b].related.append(a)
+    for p in parents:
+        p.related.sort()
+
+
+def _materialize(node: _DistillNode, node_dir: Path, layer: int) -> None:
+    node_dir.mkdir(parents=True, exist_ok=True)
+    child_index: list[tuple[str, str, bool]] = []
+    for child in node.children:
+        if child.is_leaf:
+            atomic_write_text(node_dir / f"{child.name}.md",
+                              child.content or f"# {child.name}\n")
+            child_index.append((child.name, child.brief, False))
+        else:
+            _materialize(child, node_dir / child.name, layer + 1)
+            child_index.append((child.name, child.brief, True))
+    write_pathway_md(node_dir, node.summary, layer, child_index, node.related,
+                     title=node.name)
+
+
+def _tree_layers(node: _DistillNode) -> int:
+    if node.is_leaf:
+        return 1
+    return 1 + max(_tree_layers(c) for c in node.children)
+
+
+def distill(
+    concepts_root: Path,
+    *,
+    cluster: ClusterFn,
+    summarize: SummarizeFn,
+    relate: Optional[RelateFn] = None,
+    target_fanout: int = 8,
+    min_fanout: int = 4,
+    max_fanout: int = 12,
+    max_depth: int = 6,
+    sideways_links_max: int = 5,
+    summary_hard_cap: int = 1000,
+) -> dict:
+    """Distil the flat concept leaves under ``concepts_root`` into a bottom-up
+    pathway hierarchy. Returns ``{"leaves", "layers", "nodes"}`` stats.
+
+    Invariants: exactly one root file; always >= 2 layers (root + at least the
+    leaf layer). Leaf files are the source of truth — the tree is built into a
+    staging dir and swapped in only on success, so a mid-build LLM failure never
+    loses concepts. ``target_fanout`` / ``min_fanout`` / ``max_fanout`` are
+    passed to the clusterer (advisory); ``max_depth`` bounds the number of
+    parent layers built.
+    """
+    concepts_root = Path(concepts_root)
+    concepts_root.mkdir(parents=True, exist_ok=True)
+    leaves = _read_leaves(concepts_root)
+
+    # Empty KB: just (re)seed a root topic, nothing to distil.
+    if not leaves:
+        write_pathway_md(concepts_root, "Knowledge base topics.", 1, [], [])
+        return {"leaves": 0, "layers": 1, "nodes": 1}
+
+    used: set[str] = {n.name for n in leaves}
+    cap = lambda text: _truncate_words(text, summary_hard_cap)  # noqa: E731
+
+    current = leaves
+    built = 0
+    # Build one parent layer per iteration. Reserve one depth level for the root.
+    while len(current) > 1 and built < max_depth - 1:
+        parents = _build_parent_layer(current, cluster, summarize, used, cap)
+        if len(parents) >= len(current):
+            break  # no distillation progress; collapse survivors into root below
+        _link_sideways(parents, relate, sideways_links_max)
+        current = parents
+        built += 1
+
+    if len(current) == 1 and not current[0].is_leaf:
+        root = current[0]
+    else:
+        # Wrap the survivors (leaves and/or top-layer nodes) in a single root so
+        # there is always exactly one root and always >= 2 layers.
+        root_name = _unique_name("root", used)
+        root = _DistillNode(
+            name=root_name,
+            summary=cap(summarize(root_name, [c.summary for c in current])),
+            children=list(current),
+            brief="",
+        )
+
+    # Materialize into staging, then atomically swap for the current contents.
+    staging = concepts_root.parent / f".{concepts_root.name}.distill"
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+    try:
+        _materialize(root, staging, layer=1)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise  # leaves on disk untouched
+
+    for child in list(concepts_root.iterdir()):
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+    for child in sorted(staging.iterdir()):
+        child.replace(concepts_root / child.name)
+    shutil.rmtree(staging, ignore_errors=True)
+
+    def _count(node: _DistillNode) -> int:
+        return 1 + sum(_count(c) for c in node.children)
+
+    return {"leaves": len(leaves), "layers": _tree_layers(root), "nodes": _count(root)}

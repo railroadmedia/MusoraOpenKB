@@ -178,6 +178,16 @@ def list_existing_wiki_targets(wiki_dir: Path) -> set[str]:
     if concepts_dir.is_dir():
         for p in concepts_dir.rglob("*.md"):
             if p.name == "_topic.md":
+                # A topic node is addressable by its directory name so that
+                # pathway/sideways ("related") links resolve. Register both the
+                # bare dir name (path-independent, survives re-layering) and the
+                # full relative path.
+                d = p.parent
+                if d != concepts_dir:
+                    rel_dir = d.relative_to(wiki_dir)
+                    targets.add(str(rel_dir).replace("\\", "/"))  # concepts/<...>/<name>
+                    targets.add(f"concepts/{d.name}")
+                    targets.add(d.name)  # bare <name>
                 continue
             rel = p.relative_to(wiki_dir).with_suffix("")
             targets.add(str(rel).replace("\\", "/"))  # concepts/<...>/<stem>

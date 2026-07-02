@@ -55,6 +55,16 @@ Operations: ingest, query, lint
   one field OKF requires; consumers use it for routing/filtering/presentation.
 - `description:` — a single-sentence one-liner (the field formerly named `brief`).
 - Do not include YAML frontmatter (---) in generated content; it is managed by code.
+
+## Hierarchy
+Describe how THIS knowledge base should be themed when concepts are distilled
+into a multi-layer pathway hierarchy (`openkb distill`). The text below is
+injected into every category-naming, summarization, and relatedness prompt, so
+edit it to reflect this KB's purpose and what "general vs specific" means here.
+Higher layers should be general, thematic, and encapsulating; leaves are the
+specific facts and concepts.
+
+(Describe the KB's purpose and preferred top-level themes here.)
 """
 
 # Backward compat alias

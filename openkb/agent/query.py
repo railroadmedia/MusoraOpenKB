@@ -66,7 +66,9 @@ The concepts/ wiki is a TOPIC TREE — descend it, do not enumerate everything.
    short docs → read_file that path; pageindex docs → get_page_content(doc_name, pages)
    with tight page ranges. Never fetch a whole document.
 6. Source content may reference images; use get_image when needed.
-7. If a branch has nothing useful, back up and try a sibling. Synthesize a clear,
+7. If a branch has nothing useful, back up and try a sibling. If a node lists
+   "Related pathways" (sideways links) that look more relevant, follow the
+   related link directly instead of backtracking to the root. Synthesize a clear,
    concise, well-cited answer grounded in wiki content.
 
 Answer based only on wiki content. Be concise.
