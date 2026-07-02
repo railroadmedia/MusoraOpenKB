@@ -1,5 +1,28 @@
 import json
+import os
+
 import pytest
+
+
+@pytest.fixture
+def require_llm():
+    """Gate for `@pytest.mark.llm` tests: skip unless real-LLM testing is opted
+    into via OPENKB_LLM_TESTS=1 and an LLM_API_KEY is present (or a local
+    endpoint model that needs no key). Returns nothing; used for its skip."""
+    if os.environ.get("OPENKB_LLM_TESTS") != "1":
+        pytest.skip("real-LLM tests are opt-in; set OPENKB_LLM_TESTS=1 to run")
+    model = os.environ.get("OPENKB_TEST_MODEL")
+    if not model:
+        pytest.skip("set OPENKB_TEST_MODEL (e.g. anthropic/claude-haiku-4-5 or ollama/llama3.1)")
+    # Local endpoints (ollama/lmstudio) don't need a key; hosted models do.
+    if not model.split("/")[0] in {"ollama", "lmstudio"} and not os.environ.get("LLM_API_KEY"):
+        pytest.skip("hosted OPENKB_TEST_MODEL requires LLM_API_KEY")
+
+
+@pytest.fixture
+def llm_model():
+    """The model id for real-LLM tests (validated by `require_llm`)."""
+    return os.environ.get("OPENKB_TEST_MODEL", "")
 
 
 @pytest.fixture(autouse=True)
