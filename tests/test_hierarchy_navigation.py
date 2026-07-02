@@ -14,7 +14,9 @@ from __future__ import annotations
 import pytest
 
 from openkb import topic_tree as tt
-from tests.support.eval_corpus import build_real_tree, require_llm_or_skip, write_report
+from tests.support.eval_corpus import (
+    build_real_tree, dump_tree, require_llm_or_skip, write_report,
+)
 
 pytestmark = pytest.mark.llm
 
@@ -60,6 +62,7 @@ def _descend(model: str, concepts_root, question: str, max_hops: int):
 def nav_results(tmp_path_factory):
     model = require_llm_or_skip()
     wiki = build_real_tree(model, tmp_path_factory.mktemp("wiki"))
+    dump_tree("hierarchy_navigation", wiki / "concepts")
     concepts = wiki / "concepts"
     results = []
     for question, expected in NAV_CASES:

@@ -15,7 +15,9 @@ import pytest
 
 from openkb import topic_tree as tt
 from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
-from tests.support.eval_corpus import CONCEPTS, build_real_tree, require_llm_or_skip
+from tests.support.eval_corpus import (
+    CONCEPTS, build_real_tree, dump_tree, require_llm_or_skip,
+)
 
 pytestmark = pytest.mark.llm
 
@@ -25,7 +27,9 @@ def built_tree(tmp_path_factory):
     """Build the tree once per module against the real model."""
     model = require_llm_or_skip()
     wiki = tmp_path_factory.mktemp("wiki")
-    return build_real_tree(model, wiki)
+    wiki = build_real_tree(model, wiki)
+    dump_tree("hierarchy", wiki / "concepts")  # browsable snapshot of the built tree
+    return wiki
 
 
 def test_single_root(require_llm, built_tree):
@@ -46,14 +50,18 @@ def test_no_concept_lost(require_llm, built_tree):
 
 def test_depth_and_fanout_bounded(require_llm, built_tree):
     concepts = built_tree / "concepts"
+    from openkb.config import DEFAULT_HIERARCHY
+    # distill's fan-out is advisory (the LLM sizes each layer); allow a little
+    # slack above the configured max before calling it degenerate.
+    fanout_ceiling = DEFAULT_HIERARCHY.max_fanout + 2
     for d in concepts.rglob("*"):
         if d.is_dir():
-            assert tt.child_count(d) <= tt.FANOUT_K
+            assert tt.child_count(d) <= fanout_ceiling
     depth = max(
         len(p.relative_to(concepts).parts) - 1
         for p in concepts.rglob("*.md") if p.name != tt.TOPIC_FILE
     )
-    assert 1 <= depth <= tt.MAX_DEPTH
+    assert 1 <= depth <= DEFAULT_HIERARCHY.max_depth
 
 
 def test_wikilinks_survive_moves(require_llm, built_tree):

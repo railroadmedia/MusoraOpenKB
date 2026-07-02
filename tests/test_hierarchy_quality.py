@@ -17,7 +17,9 @@ import pytest
 
 from openkb import topic_tree as tt
 from openkb.agent.compiler import _JSON_RESPONSE_FORMAT, _llm_call
-from tests.support.eval_corpus import build_real_tree, require_llm_or_skip, write_report
+from tests.support.eval_corpus import (
+    build_real_tree, dump_tree, require_llm_or_skip, write_report,
+)
 
 pytestmark = pytest.mark.llm
 
@@ -76,6 +78,7 @@ def _grade_tree(model: str, concepts_root):
 def graded(tmp_path_factory):
     model = require_llm_or_skip()
     wiki = build_real_tree(model, tmp_path_factory.mktemp("wiki"))
+    dump_tree("hierarchy_quality", wiki / "concepts")
     records = _grade_tree(model, wiki / "concepts")
     scores = [r["score"] for r in records]
     mean = sum(scores) / len(scores) if scores else 0.0

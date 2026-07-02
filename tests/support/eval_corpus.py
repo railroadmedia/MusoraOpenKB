@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -53,11 +54,20 @@ def seed_concepts(wiki: Path) -> Path:
 
 
 def build_real_tree(model: str, wiki: Path) -> Path:
-    """Seed concepts and bootstrap them into a tree using the real model."""
-    from openkb.topic_tree_llm import make_cluster, make_summarize
+    """Seed concepts and DISTILL them into a bottom-up pathway hierarchy using the
+    real model — this is the intended engine (a genuinely distilled root summary,
+    pathway nodes, sideways links), not the deprecated top-down bootstrap."""
+    from openkb.topic_tree_llm import (
+        make_distill_cluster, make_distill_summarize, make_relate,
+    )
 
     concepts = seed_concepts(wiki)
-    tt.bootstrap(concepts, cluster=make_cluster(model), summarize=make_summarize(model))
+    tt.distill(
+        concepts,
+        cluster=make_distill_cluster(model),
+        summarize=make_distill_summarize(model),
+        relate=make_relate(model),
+    )
     return wiki
 
 
@@ -82,6 +92,36 @@ def write_report(name: str, payload: dict) -> Path:
     path = reports / f"{name}.json"
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return path
+
+
+def _reports_root() -> Path:
+    return Path(__file__).resolve().parent.parent / "reports"
+
+
+def artifacts_dir(name: str) -> Path:
+    """A per-eval directory under tests/reports/artifacts/ (gitignored) where a
+    run leaves browsable artifacts next to its JSON scores."""
+    d = _reports_root() / "artifacts" / name
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def dump_tree(name: str, concepts_root: Path) -> Path:
+    """Copy the built concept tree (pathway _topic.md + concept + enrichment
+    files) into the artifacts dir so a reviewer can read exactly what the model
+    produced — the actual category names, summaries, and prose behind the score."""
+    dest = artifacts_dir(name) / "concepts"
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(concepts_root, dest)
+    return dest
+
+
+def write_artifact(name: str, filename: str, text: str) -> Path:
+    """Write a human-readable artifact (e.g. a dropped-claims log) for a run."""
+    p = artifacts_dir(name) / filename
+    p.write_text(text, encoding="utf-8")
+    return p
 
 
 def tree_snapshot(concepts_root: Path) -> list[str]:

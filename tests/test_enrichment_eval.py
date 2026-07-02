@@ -24,7 +24,7 @@ from openkb.agent import enricher as E
 from openkb.agent.compiler import _JSON_RESPONSE_FORMAT, _llm_call
 from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
 from tests.support.eval_corpus import (
-    CONCEPTS, require_llm_or_skip, seed_concepts, write_report,
+    CONCEPTS, dump_tree, require_llm_or_skip, seed_concepts, write_artifact, write_report,
 )
 
 pytestmark = pytest.mark.llm
@@ -43,11 +43,26 @@ def enriched(tmp_path_factory):
     model = require_llm_or_skip()
     wiki = tmp_path_factory.mktemp("wiki")
     concepts = seed_concepts(wiki)
+
+    # Wrap verify to record every claim's verdict, so a reviewer can see exactly
+    # which inferred claims were kept vs. dropped as contradictions.
+    base_verify = E.make_verify(model)
+    verdict_log: list[str] = []
+
+    def verify(concept, claims):
+        verdicts = base_verify(concept, claims)
+        for claim, v in zip(claims, verdicts):
+            mark = {"contradicts": "DROPPED ", "supported": "kept(sup)", "inferred": "kept(inf)"}.get(v, v)
+            verdict_log.append(f"[{concept['stem']}] {mark}: {claim}")
+        return verdicts
+
     E.enrich(
         concepts,
         generate=E.make_generate(model, guidance="A music-education KB for learners."),
-        verify=E.make_verify(model),
+        verify=verify,
     )
+    dump_tree("enrichment", concepts)  # browsable: every .enrich.md the model wrote
+    write_artifact("enrichment", "verify_log.txt", "\n".join(verdict_log) or "(no inferred claims)")
     return {"model": model, "wiki": wiki, "concepts": concepts}
 
 
