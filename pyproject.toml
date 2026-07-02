@@ -57,6 +57,12 @@ openkb = "openkb.cli:cli"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "llm: exercises a real LLM; opt-in, skipped by default",
+  "integration: full-pipeline, deterministic (fake LLM)",
+  "regression: pins a previously fixed bug",
+]
+addopts = "-m 'not llm'"
 
 [project.optional-dependencies]
 dev = ["pytest==9.0.3", "pytest-asyncio==1.3.0"]
