@@ -9,6 +9,7 @@ passing different callables.
 from __future__ import annotations
 
 import re
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
@@ -222,11 +223,35 @@ def bootstrap(
     taxonomy on early-arriving concepts. Returns the number placed.
     """
     concepts_root.mkdir(parents=True, exist_ok=True)
-    # Deterministic order; read all into memory, then clear the flat root.
+    # Deterministic order; read all into memory. The flat leaves are the source
+    # of truth and are NOT removed until the tree is built successfully — build
+    # into a staging dir first so a mid-build failure (e.g. the LLM clusterer
+    # raising) cannot destroy the concepts.
     flat = sorted(p for p in concepts_root.glob("*.md") if p.name != TOPIC_FILE)
     items = [(p.stem, _brief(p), p.read_text(encoding="utf-8")) for p in flat]
+
+    staging = concepts_root.parent / f".{concepts_root.name}.rebuild"
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+    try:
+        placed = _build_subtree(staging, items, cluster, summarize, depth=0)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise  # originals on disk are untouched
+
+    # Build succeeded: now it is safe to swap the staged tree in for the flat
+    # leaves. Preserve an existing root _topic.md (only seed the default one).
     for p in flat:
         p.unlink()
     if not (concepts_root / TOPIC_FILE).exists():
         write_topic_md(concepts_root, "Knowledge base topics.", 0)
-    return _build_subtree(concepts_root, items, cluster, summarize, depth=0)
+    for child in sorted(staging.iterdir()):
+        dest = concepts_root / child.name
+        if dest.is_dir():
+            shutil.rmtree(dest)
+        elif dest.exists():
+            dest.unlink()
+        child.replace(dest)
+    shutil.rmtree(staging, ignore_errors=True)
+    return placed
