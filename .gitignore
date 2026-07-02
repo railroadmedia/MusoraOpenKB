@@ -18,6 +18,11 @@ output/
 # Eval reports (real-LLM test artifacts)
 tests/reports/
 
+# Test corpora — fetched/internal datasets are never committed (license hygiene).
+# Only a hand-authored, license-clean tests/fixtures/corpora/mini/ may be committed.
+tests/fixtures/corpora/
+!tests/fixtures/corpora/mini/
+
 # Local only
 docs/
 .claude/
