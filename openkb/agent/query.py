@@ -61,7 +61,10 @@ The concepts/ wiki is a TOPIC TREE — descend it, do not enumerate everything.
    to descend (paths nest, e.g. "attention/multi-head").
 3. Repeat until you reach the relevant concept leaves (listed under "concepts here").
 4. read_file the relevant concept pages. For "who/what is X" about a named person,
-   organization, place, or product, read the matching entities/ page.
+   organization, place, or product, read the matching entities/ page. A concept may
+   have a paired `<stem>.enrich.md` with generated enrichment — read it for extra
+   context, but treat the grounded concept as authoritative and treat any
+   `> [!inferred]` lines as non-authoritative (model-added, not from the sources).
 5. For detailed source content, follow a summary page's `full_text` frontmatter:
    short docs → read_file that path; pageindex docs → get_page_content(doc_name, pages)
    with tight page ranges. Never fetch a whole document.

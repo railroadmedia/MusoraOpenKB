@@ -21,6 +21,12 @@ from openkb.locks import atomic_write_text
 FANOUT_K = 10
 MAX_DEPTH = 6
 TOPIC_FILE = "_topic.md"
+ENRICH_SUFFIX = ".enrich.md"  # paired enrichment files (see openkb/agent/enricher.py)
+
+
+def _is_concept_md(path: Path) -> bool:
+    """A real concept leaf — not the topic index and not a paired enrichment file."""
+    return path.name != TOPIC_FILE and not path.name.endswith(ENRICH_SUFFIX)
 
 
 @dataclass
@@ -64,7 +70,7 @@ def write_topic_md(node_dir: Path, summary: str, size: int) -> None:
 
 def child_count(node_dir: Path) -> int:
     subtopics = [d for d in node_dir.iterdir() if d.is_dir()]
-    concepts = [f for f in node_dir.glob("*.md") if f.name != TOPIC_FILE]
+    concepts = [f for f in node_dir.glob("*.md") if _is_concept_md(f)]
     return len(subtopics) + len(concepts)
 
 
@@ -78,7 +84,7 @@ def read_topic(concepts_root: Path, rel: str = "") -> TopicNodeView:
             if child.is_dir():
                 sub_sum = str(_frontmatter(child / TOPIC_FILE).get("summary", "")).strip()
                 child_topics.append((child.name, sub_sum))
-            elif child.suffix == ".md" and child.name != TOPIC_FILE:
+            elif child.suffix == ".md" and _is_concept_md(child):
                 child_concepts.append((child.stem, _brief(child)))
     return TopicNodeView(
         summary=summary, child_topics=child_topics, child_concepts=child_concepts
@@ -227,7 +233,7 @@ def bootstrap(
     # of truth and are NOT removed until the tree is built successfully — build
     # into a staging dir first so a mid-build failure (e.g. the LLM clusterer
     # raising) cannot destroy the concepts.
-    flat = sorted(p for p in concepts_root.glob("*.md") if p.name != TOPIC_FILE)
+    flat = sorted(p for p in concepts_root.glob("*.md") if _is_concept_md(p))
     items = [(p.stem, _brief(p), p.read_text(encoding="utf-8")) for p in flat]
 
     staging = concepts_root.parent / f".{concepts_root.name}.rebuild"
@@ -279,6 +285,9 @@ class _DistillNode:
     content: Optional[str] = None  # leaf file body; None for internal nodes
     brief: str = ""                # one-line brief shown in a parent's child index
     related: list[str] = field(default_factory=list)
+    # Sidecar files that travel with a leaf (e.g. its <stem>.enrich.md), so the
+    # pairing survives distill's atomic rebuild. filename -> content.
+    attachments: dict[str, str] = field(default_factory=dict)
 
     @property
     def is_leaf(self) -> bool:
@@ -322,13 +331,18 @@ def _read_leaves(concepts_root: Path) -> list[_DistillNode]:
     an existing tree too), deterministic by relative path."""
     leaves = []
     for p in sorted(concepts_root.rglob("*.md"), key=lambda x: str(x).lower()):
-        if p.name == TOPIC_FILE:
+        if not _is_concept_md(p):
             continue
         brief = _brief(p)
-        leaves.append(_DistillNode(
+        node = _DistillNode(
             name=p.stem, summary=brief or p.stem,
             content=p.read_text(encoding="utf-8"), brief=brief,
-        ))
+        )
+        # Carry the paired enrichment file (if any) so it stays co-located after rebuild.
+        sp = p.with_name(p.stem + ENRICH_SUFFIX)
+        if sp.is_file():
+            node.attachments[sp.name] = sp.read_text(encoding="utf-8")
+        leaves.append(node)
     return leaves
 
 
@@ -442,6 +456,8 @@ def _materialize(node: _DistillNode, node_dir: Path, layer: int) -> None:
         if child.is_leaf:
             atomic_write_text(node_dir / f"{child.name}.md",
                               child.content or f"# {child.name}\n")
+            for fname, fcontent in child.attachments.items():
+                atomic_write_text(node_dir / fname, fcontent)
             child_index.append((child.name, child.brief, False))
         else:
             _materialize(child, node_dir / child.name, layer + 1)

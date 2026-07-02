@@ -60,6 +60,31 @@ def fake_llm_call(model, messages, step_name, **kwargs):
     if step_name == "topic-choose":
         return json.dumps({"pick": None})  # keep at current node
 
+    if step_name == "enrich":
+        m = re.search(r"Concept:\s*(\S+)", prompt)
+        stem = m.group(1) if m else "concept"
+        tail = prompt.split("Related concepts:", 1)[-1]
+        neighbors = _stems(tail)
+        return json.dumps({
+            "elaboration": f"Elaboration of {stem} derived from its content.",
+            "inferred": [f"{stem} relates to the broader field."],
+            "examples": [f"A worked example for {stem}."],
+            "see_also": neighbors,
+        })
+
+    if step_name == "enrich-verify":
+        n = len(re.findall(r"^\d+\.\s", prompt, re.MULTILINE))
+        # Mark any statement containing the token CONTRADICT as contradicting;
+        # otherwise keep as inferred. Lets tests plant a droppable claim.
+        verdicts = []
+        for line in prompt.splitlines():
+            m = re.match(r"^\d+\.\s+(.*)", line)
+            if m:
+                verdicts.append("contradicts" if "CONTRADICT" in m.group(1) else "inferred")
+        if not verdicts:
+            verdicts = ["inferred"] * n
+        return json.dumps({"verdicts": verdicts})
+
     raise AssertionError(f"fake_llm has no route for step_name={step_name!r}")
 
 
@@ -72,5 +97,6 @@ def fake_llm():
     through the fake.
     """
     with patch("openkb.agent.compiler._llm_call", side_effect=fake_llm_call), \
-            patch("openkb.topic_tree_llm._llm_call", side_effect=fake_llm_call) as m:
+            patch("openkb.topic_tree_llm._llm_call", side_effect=fake_llm_call), \
+            patch("openkb.agent.enricher._llm_call", side_effect=fake_llm_call) as m:
         yield m

@@ -1161,6 +1161,11 @@ def _remove_doc_from_pages(
     deleted: list[str] = []
 
     for path in sorted(pages_dir.glob("*.md")):
+        # Paired enrichment files are attachments of their concept, not standalone
+        # pages; they are removed with their concept below (and skipping here
+        # also avoids reading one that was just deleted alongside its concept).
+        if path.name.endswith(".enrich.md"):
+            continue
         text = path.read_text(encoding="utf-8")
         # Cheap filter: skip pages that don't reference the doc at all.
         if source_file not in text and bare_source not in text:
@@ -1198,6 +1203,8 @@ def _remove_doc_from_pages(
 
         if sources_empty and not keep_empty:
             path.unlink()
+            # Remove the paired enrichment file (if any) so it never orphans.
+            path.with_name(path.stem + ".enrich.md").unlink(missing_ok=True)
             deleted.append(path.stem)
         elif new_text != text:
             path.write_text(new_text, encoding="utf-8")

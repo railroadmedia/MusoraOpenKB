@@ -65,6 +65,18 @@ Higher layers should be general, thematic, and encapsulating; leaves are the
 specific facts and concepts.
 
 (Describe the KB's purpose and preferred top-level themes here.)
+
+## Enrichment
+Guidance for the generative enrichment pass (`openkb enrich`), which authors a
+paired `<concept>.enrich.md` for each grounded concept. The text below is injected
+into every enrichment prompt. Describe the intended audience, tone, and how much
+to add. Two kinds of content are produced and kept separate: grounded
+*elaboration* (strictly derivable from the concept and its links) and *inferred*
+context (the model's own world knowledge, tagged `> [!inferred]` and gated by a
+verification pass). Never contradict the grounded source; the grounded concept
+always wins.
+
+(Describe the audience, tone, and desired depth of enrichment here.)
 """
 
 # Backward compat alias

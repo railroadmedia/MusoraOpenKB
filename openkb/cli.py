@@ -46,7 +46,7 @@ from openkb.agent.compiler import compile_long_doc
 from openkb.config import (
     DEFAULT_CONFIG, load_config, save_config, load_global_config, register_kb,
     resolve_extra_headers, set_extra_headers, resolve_timeout, set_timeout,
-    resolve_litellm_settings, resolve_hierarchy,
+    resolve_litellm_settings, resolve_hierarchy, resolve_enrichment,
 )
 from openkb.converter import _registry_path, convert_document
 from openkb.indexer import import_cloud_document
@@ -1726,12 +1726,17 @@ def reindex(ctx):
     click.echo(f"Reindexed {n} concept(s) into the topic tree.")
 
 
-def _hierarchy_guidance(wiki_dir) -> str:
-    """Extract the ``## Hierarchy`` section from wiki/AGENTS.md (its body up to
-    the next heading). Falls back to empty so prompts stay generic if unset."""
+def _agents_section(wiki_dir, heading: str) -> str:
+    """Extract a top-level ``## <heading>`` section body from wiki/AGENTS.md (up
+    to the next heading). Falls back to empty so prompts stay generic if unset."""
     text = get_agents_md(wiki_dir)
-    m = re.search(r"^##\s+Hierarchy\s*\n(.*?)(?=\n##\s|\Z)", text, re.DOTALL | re.MULTILINE)
+    m = re.search(rf"^##\s+{re.escape(heading)}\s*\n(.*?)(?=\n##\s|\Z)",
+                  text, re.DOTALL | re.MULTILINE)
     return m.group(1).strip() if m else ""
+
+
+def _hierarchy_guidance(wiki_dir) -> str:
+    return _agents_section(wiki_dir, "Hierarchy")
 
 
 @cli.command()
@@ -1784,6 +1789,60 @@ def distill(ctx):
     click.echo(
         f"Distilled {stats['leaves']} concept(s) into a {stats['layers']}-layer "
         f"hierarchy ({stats['nodes']} nodes)."
+    )
+
+
+@cli.command()
+@click.option("--concept", "concept", default=None,
+              help="Enrich only this concept stem (default: all).")
+@click.option("--force", is_flag=True,
+              help="Re-enrich even when the source concept is unchanged.")
+@click.pass_context
+def enrich(ctx, concept, force):
+    """Author a paired <concept>.enrich.md for each grounded concept (Pass 3).
+
+    Generative enrichment: grounded elaboration plus verify-gated inferred world
+    knowledge, examples, and cross-links. The grounded concept file is never
+    modified; enrichment files are regenerable. No-op unless `enrichment.enabled: true`
+    is set in .openkb/config.yaml.
+    """
+    kb_dir = _find_kb_dir(ctx.obj.get("kb_dir_override"))
+    if kb_dir is None:
+        click.echo("No knowledge base found. Run `openkb init` first.")
+        return
+    config = load_config(kb_dir / ".openkb" / "config.yaml")
+    s = resolve_enrichment(config)
+    if not s.enabled:
+        click.echo(
+            "enrichment is not enabled. Set `enrichment:` with `enabled: true` in "
+            ".openkb/config.yaml first."
+        )
+        return
+    _setup_llm_key(kb_dir)
+    model = s.model or config.get("model", DEFAULT_CONFIG["model"])
+    guidance = _agents_section(kb_dir / "wiki", "Enrichment")
+    from openkb.agent.enricher import (
+        enrich as run_enrich, make_generate, make_verify,
+    )
+
+    verify = make_verify(model) if s.verify else None
+    concepts_root = kb_dir / "wiki" / "concepts"
+    with kb_ingest_lock(kb_dir / ".openkb"):
+        stats = run_enrich(
+            concepts_root,
+            generate=make_generate(
+                model, guidance=guidance, sections=s.sections,
+                depth=s.depth, max_tokens=s.max_tokens),
+            verify=verify,
+            sections=s.sections,
+            include_world_knowledge=s.include_world_knowledge,
+            force=force,
+            only_stems={concept} if concept else None,
+        )
+    click.echo(
+        f"Enriched {stats['created'] + stats['updated']} concept(s) "
+        f"({stats['created']} new, {stats['updated']} updated, "
+        f"{stats['skipped']} unchanged)."
     )
 
 

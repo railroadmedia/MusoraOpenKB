@@ -327,6 +327,7 @@ def find_orphans(wiki: Path) -> list[str]:
         p for p in wiki.rglob("*.md")
         if p.name not in {"index.md", *_EXCLUDED_FILES}
         and "sources" not in p.relative_to(wiki).parts
+        and not p.name.endswith(".enrich.md")  # paired attachments, not standalone pages
     ]
     if not all_mds:
         return []
@@ -464,6 +465,8 @@ def check_index_sync(wiki: Path) -> list[str]:
         if not subdir_path.exists():
             continue
         for md in sorted(subdir_path.glob("*.md")):
+            if md.name.endswith(".enrich.md"):
+                continue  # paired attachments are not standalone index entries
             stem = md.stem
             if stem not in index_stems and stem.lower() not in index_text_lower:
                 issues.append(f"{subdir}/{stem}.md not mentioned in index.md")

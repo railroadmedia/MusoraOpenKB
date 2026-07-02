@@ -205,6 +205,106 @@ def resolve_hierarchy(config: dict) -> HierarchyConfig:
     )
 
 
+@dataclass(frozen=True)
+class EnrichmentConfig:
+    """Effective settings for the generative enrichment pass (``openkb enrich``).
+
+    Enrichment authors a paired ``<stem>.enrich.md`` per grounded concept. It is
+    opt-in (``enabled``) and machine-owned/regenerable — the grounded leaf is
+    never modified. See docs/enrichment-layer-plan.md.
+    """
+    enabled: bool = False
+    depth: str = "standard"                 # brief | standard | deep
+    sections: tuple[str, ...] = ("elaboration", "inferred", "examples", "see_also")
+    include_world_knowledge: bool = True    # enable the (verify-gated) inferred block
+    verify: bool = True                     # run the hallucination-guard verify pass
+    max_tokens: int = 800                   # soft cap per enrichment file
+    model: str | None = None                # optional model override for enrich
+
+
+DEFAULT_ENRICHMENT = EnrichmentConfig()
+_VALID_ENRICH_DEPTHS = frozenset({"brief", "standard", "deep"})
+_VALID_ENRICH_SECTIONS = ("elaboration", "inferred", "examples", "see_also")
+
+
+def resolve_enrichment(config: dict) -> EnrichmentConfig:
+    """Resolve the optional ``enrichment:`` config block into an EnrichmentConfig.
+
+    Absent or non-mapping → defaults (disabled). Each key is validated
+    independently and falls back to its default with a warning. ``sections`` is
+    cleaned to the known set (order preserving, de-duped); an empty/invalid list
+    falls back to the default sections.
+    """
+    raw = config.get("enrichment")
+    if raw is None:
+        return DEFAULT_ENRICHMENT
+    if not isinstance(raw, dict):
+        logger.warning(
+            "config: 'enrichment' must be a mapping, got %s — using defaults.",
+            type(raw).__name__,
+        )
+        return DEFAULT_ENRICHMENT
+
+    d = DEFAULT_ENRICHMENT
+
+    def _bool(key: str, default: bool) -> bool:
+        if key not in raw:
+            return default
+        val = raw[key]
+        if not isinstance(val, bool):
+            logger.warning(
+                "config: 'enrichment.%s' must be a boolean, got %r — using default %s.",
+                key, val, default,
+            )
+            return default
+        return val
+
+    depth = raw.get("depth", d.depth)
+    if not isinstance(depth, str) or depth.strip().lower() not in _VALID_ENRICH_DEPTHS:
+        logger.warning(
+            "config: 'enrichment.depth' must be one of %s, got %r — using default %r.",
+            sorted(_VALID_ENRICH_DEPTHS), depth, d.depth,
+        )
+        depth = d.depth
+    else:
+        depth = depth.strip().lower()
+
+    raw_sections = raw.get("sections")
+    if raw_sections is None:
+        sections = d.sections
+    elif not isinstance(raw_sections, list):
+        logger.warning(
+            "config: 'enrichment.sections' must be a list, got %s — using defaults.",
+            type(raw_sections).__name__,
+        )
+        sections = d.sections
+    else:
+        cleaned: list[str] = []
+        for s in raw_sections:
+            if isinstance(s, str):
+                s = s.strip().lower()
+                if s in _VALID_ENRICH_SECTIONS and s not in cleaned:
+                    cleaned.append(s)
+        sections = tuple(cleaned) if cleaned else d.sections
+
+    model = raw.get("model", d.model)
+    if model is not None and (not isinstance(model, str) or not model.strip()):
+        logger.warning(
+            "config: 'enrichment.model' must be a non-empty string — ignoring it.",
+        )
+        model = d.model
+
+    return EnrichmentConfig(
+        enabled=_bool("enabled", d.enabled),
+        depth=depth,
+        sections=sections,
+        include_world_knowledge=_bool("include_world_knowledge", d.include_world_knowledge),
+        verify=_bool("verify", d.verify),
+        max_tokens=_pos_int(raw, "max_tokens", d.max_tokens),
+        model=model.strip() if isinstance(model, str) else model,
+    )
+
+
 def resolve_extra_headers(config: dict) -> dict[str, str]:
     """Resolve the optional ``extra_headers:`` config key into a str→str dict.
 

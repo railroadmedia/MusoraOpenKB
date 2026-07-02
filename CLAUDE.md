@@ -25,6 +25,18 @@ leaves. Two engines live in `openkb/topic_tree.py`:
   so a mid-build LLM failure never loses concepts. LLM callables live in
   `openkb/topic_tree_llm.py` (`make_distill_cluster`/`make_distill_summarize`/`make_relate`).
 
+### Generative enrichment (experimental, `enrichment.enabled: true`)
+A third pass (`openkb enrich`) authors a paired `<concept>.enrich.md` for each
+grounded concept: grounded *elaboration* plus verify-gated *inferred* world
+knowledge (tagged `> [!inferred]`), examples, and cross-links. The grounded
+concept file is the source of truth and is never modified; enrichment files are
+machine-owned and regenerable (idempotent via a `source_hash`). Engine +
+LLM callables in `openkb/agent/enricher.py` (`enrich`/`make_generate`/`make_verify`);
+config via `openkb/config.py::resolve_enrichment` (the `enrichment:` block);
+guidance from the `## Enrichment` section of `AGENTS.md`. Runs before `distill`,
+which excludes `*.enrich.md` from leaves and carries each as an attachment so the
+pairing survives the atomic rebuild. See `docs/enrichment-layer-plan.md`.
+
 ## Commands
 
 This project uses `uv` (see `uv.lock`). Dev dependencies (`pytest`, `pytest-asyncio`) are in the `dev` extra.
