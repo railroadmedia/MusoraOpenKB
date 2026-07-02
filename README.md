@@ -47,6 +47,8 @@ OpenKB has two layers: a **wiki foundation** that compiles and maintains your kn
 - **Compiled wiki:** The LLM compiles your documents into summaries, concept pages, entity pages, and cross-links, all kept in sync.
 - **Query & chat:** One-off questions or multi-turn conversations over your wiki, with persisted sessions to resume.
 - **Skill Factory:** Distills redistributable agent skills from your wiki.
+- **Hierarchical distillation (experimental):** Distills the flat concept pages into a multi-layer, LLM-navigable topic hierarchy (general → specific) with sideways cross-links — `openkb distill`.
+- **Generative enrichment (experimental):** Optionally augments each concept with a paired, provenance-separated enrichment layer (grounded elaboration + verify-gated inferred context) — `openkb enrich`.
 - **OKF-ready:** Wiki pages follow the [Google OKF](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) specification for knowledge sharing.
 - **Obsidian-compatible:** The wiki is plain `.md` files with cross-links. Opens in Obsidian for graph view.
 
@@ -170,6 +172,8 @@ OpenKB commands fall into two layers: the **wiki foundation** (compile + manage 
 | <code>openkb&nbsp;remove&nbsp;&lt;doc&gt;</code> | Remove a document and clean up its wiki pages, images, registry, and PageIndex state (`--dry-run` to preview, `--keep-raw` / `--keep-empty` to retain artifacts) |
 | <code>openkb&nbsp;recompile&nbsp;[&lt;doc&gt;]&nbsp;[--all]</code> | Re-run the compile pipeline on already-indexed docs without re-indexing. Regenerates summaries and rewrites concept pages; manual edits are overwritten (`--dry-run` to preview, `--refresh-schema` to also update `wiki/AGENTS.md`) |
 | <code>openkb&nbsp;feedback&nbsp;["msg"]</code> | File feedback by opening a prefilled GitHub issue (`--type bug/feature/question` to tag it) |
+| <code>openkb&nbsp;distill</code> | *(experimental; needs `topic_tree: true`)* Build a bottom-up, multi-layer navigable concept hierarchy (pathway nodes + sideways links) from the flat concept pages. `openkb reindex` is the top-down cold-start variant. |
+| <code>openkb&nbsp;enrich</code> | *(experimental; needs `enrichment.enabled: true`)* Author a paired `<concept>.enrich.md` per concept — grounded elaboration plus verify-gated inferred context, examples, and cross-links; the grounded page is never modified |
 
 </details>
 
@@ -326,7 +330,7 @@ The skill is read-only. It won't run `openkb add`, `remove`, or `lint --fix` wit
 
 - [ ] Extend long document handling to non-PDF formats
 - [ ] Scale to large document collections with nested folder support
-- [ ] Hierarchical concept (topic) indexing for massive knowledge bases
+- [x] Hierarchical concept (topic) indexing for massive knowledge bases — *shipped (experimental): `openkb distill`*
 - [ ] Database-backed storage engine
 - [ ] Web UI for browsing and managing wikis
 

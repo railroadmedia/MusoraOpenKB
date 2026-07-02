@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 OpenKB (Open LLM Knowledge Base) — a Python CLI that compiles raw documents into a structured, interlinked wiki-style knowledge base using LLMs, powered by PageIndex's vectorless, reasoning-based retrieval. This is `railroadmedia/MusoraOpenKB`, Musora's fork of the upstream `VectifyAI/OpenKB`. The published PyPI package is `openkb`.
 
 Two conceptual layers:
-- **Wiki foundation** — compiles and maintains the knowledge (`init`, `add`, `recompile`, `remove`, `list`, `status`, `watch`, `lint`).
+- **Wiki foundation** — compiles and maintains the knowledge (`init`, `add`, `recompile`, `remove`, `list`, `status`, `watch`, `lint`; experimental structure passes `reindex`/`distill`/`enrich`).
 - **Generators** — turn the compiled wiki into output (`query`, `chat`, `visualize`, `skill`, `deck`).
 
 ### Hierarchical distillation (experimental, `topic_tree: true`)
