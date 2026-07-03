@@ -36,7 +36,7 @@ from openkb.config import (
     resolve_entity_types,
 )
 from openkb.lint import list_existing_wiki_targets, strip_ghost_wikilinks
-from openkb.schema import INDEX_SEED, get_agents_md
+from openkb.schema import INDEX_SEED, get_agents_md, get_agents_section
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +101,19 @@ Existing concept pages:
 Existing entity pages (with source counts = how many docs already cite them):
 {entity_briefs}
 
+Concept altitude (how GENERAL each concept should be):
+- A concept must be general enough to recur across MANY documents — an idea or
+  teachable skill, not a single fact. Prefer the broad umbrella concept.
+- Fold closely-related specifics into ONE concept as within-page detail, do NOT
+  make a page per variant. E.g. one "note-durations" (covering whole/half/quarter/
+  eighth/dotted/ties/triplets), NOT a page per note value; one "hand-position"
+  (with C-position / five-finger as facets), NOT three pages.
+- Before creating, scan the existing concepts above for the SAME idea under a
+  different name, phrasing, or plurality (e.g. "crossover-technique" when
+  "thumb-crossover" exists; "chord-changes" vs "chord-progression"). If it exists,
+  use "update" with that slug — even if you would have named it differently.
+- A narrow sub-aspect of an existing concept is that concept: update it, don't split.
+{concepts_guidance}
 Return a JSON object with two top-level keys, "concepts" and "entities".
 
 "concepts" is an object with:
@@ -530,7 +543,15 @@ def _read_wiki_context(wiki_dir: Path) -> tuple[str, list[str]]:
     index_content = index_path.read_text(encoding="utf-8") if index_path.exists() else ""
 
     concepts_dir = wiki_dir / "concepts"
-    existing = sorted(p.stem for p in concepts_dir.glob("*.md")) if concepts_dir.exists() else []
+    # Recursive: concepts may be nested under a distilled topic tree. Exclude
+    # topic-index and paired enrichment files so only real concepts are listed.
+    existing = (
+        sorted(
+            p.stem for p in concepts_dir.rglob("*.md")
+            if p.name != "_topic.md" and not p.name.endswith(".enrich.md")
+        )
+        if concepts_dir.exists() else []
+    )
 
     return index_content, existing
 
@@ -562,7 +583,12 @@ def _read_concept_briefs(wiki_dir: Path) -> str:
     if not concepts_dir.exists():
         return "(none yet)"
 
-    md_files = sorted(concepts_dir.glob("*.md"))
+    # Recursive so concept reuse still works after `distill` nests concepts;
+    # exclude topic-index and paired enrichment files.
+    md_files = sorted(
+        p for p in concepts_dir.rglob("*.md")
+        if p.name != "_topic.md" and not p.name.endswith(".enrich.md")
+    )
     if not md_files:
         return "(none yet)"
 
@@ -1425,6 +1451,8 @@ async def _compile_concepts(
     # --- Step 2: Get concepts plan (A cached) ---
     concept_briefs = _read_concept_briefs(wiki_dir)
     entity_briefs = _read_entity_briefs(wiki_dir)
+    _cg = get_agents_section(wiki_dir, "Concepts")
+    concepts_guidance = f"\nKB-specific concept guidance: {_cg}\n" if _cg else ""
 
     # Second cache breakpoint: end of the assistant summary message. Covers
     # (system + doc + summary) for the plan call and every concept call.
@@ -1437,6 +1465,7 @@ async def _compile_concepts(
         {"role": "user", "content": _CONCEPTS_PLAN_USER.format(
             concept_briefs=concept_briefs,
             entity_briefs=entity_briefs,
+            concepts_guidance=concepts_guidance,
         ).replace("__ENTITY_TYPES__", types_str)},
     ], "concepts-plan", response_format=_JSON_RESPONSE_FORMAT)
 

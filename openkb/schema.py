@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 # The compiled page-type subdirectories under wiki/. Shared source of truth
@@ -65,6 +66,15 @@ specific facts and concepts. Keep it to the theme itself; do not add meta-notes.
 
 (Describe the KB's purpose and preferred top-level themes here.)
 
+## Concepts
+<!-- Editing note (this comment is NOT sent to the model): the body of this
+section is injected into the concept-planning prompt used by `openkb add`.
+Describe the right ALTITUDE for a concept in THIS KB — general enough to recur
+across many documents, with closely-related specifics folded into one concept as
+sections rather than separate pages. Keep the body to the guidance itself. -->
+
+(Describe the desired concept granularity here.)
+
 ## Enrichment
 <!-- Editing note (this comment is NOT sent to the model): the body of this
 section is injected into every `openkb enrich` prompt. Describe the intended
@@ -93,3 +103,17 @@ def get_agents_md(wiki_dir: Path) -> str:
     if agents_file.exists():
         return agents_file.read_text(encoding="utf-8")
     return AGENTS_MD
+
+
+def get_agents_section(wiki_dir: Path, heading: str) -> str:
+    """Extract a top-level ``## <heading>`` section body from AGENTS.md as guidance
+    to inject into prompts. HTML comments (``<!-- ... -->``, human-facing editing
+    notes) are stripped so they are never sent to the model. Returns "" when the
+    section is absent or empty (so prompts stay generic)."""
+    text = get_agents_md(wiki_dir)
+    m = re.search(rf"^##\s+{re.escape(heading)}\s*\n(.*?)(?=\n##\s|\Z)",
+                  text, re.DOTALL | re.MULTILINE)
+    if not m:
+        return ""
+    body = re.sub(r"<!--.*?-->", "", m.group(1), flags=re.DOTALL)
+    return body.strip()

@@ -52,7 +52,7 @@ from openkb.converter import _registry_path, convert_document
 from openkb.indexer import import_cloud_document
 from openkb.locks import atomic_write_json, atomic_write_text, kb_ingest_lock, kb_read_lock
 from openkb.log import append_log
-from openkb.schema import AGENTS_MD, INDEX_SEED, PAGE_CONTENT_DIRS, get_agents_md
+from openkb.schema import AGENTS_MD, INDEX_SEED, PAGE_CONTENT_DIRS, get_agents_md, get_agents_section
 from openkb.topic_tree import bootstrap as tt_bootstrap
 from openkb.topic_tree import distill as tt_distill
 
@@ -1727,17 +1727,8 @@ def reindex(ctx):
 
 
 def _agents_section(wiki_dir, heading: str) -> str:
-    """Extract a top-level ``## <heading>`` section body from wiki/AGENTS.md (up
-    to the next heading) as guidance to inject into prompts. HTML comments
-    (``<!-- ... -->``) are stripped so human-facing editing notes in the template
-    are never sent to the model. Falls back to empty so prompts stay generic."""
-    text = get_agents_md(wiki_dir)
-    m = re.search(rf"^##\s+{re.escape(heading)}\s*\n(.*?)(?=\n##\s|\Z)",
-                  text, re.DOTALL | re.MULTILINE)
-    if not m:
-        return ""
-    body = re.sub(r"<!--.*?-->", "", m.group(1), flags=re.DOTALL)
-    return body.strip()
+    """Thin wrapper over ``schema.get_agents_section`` (shared with the compiler)."""
+    return get_agents_section(wiki_dir, heading)
 
 
 def _hierarchy_guidance(wiki_dir) -> str:
