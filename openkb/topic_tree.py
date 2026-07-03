@@ -535,7 +535,12 @@ def distill(
         write_pathway_md(concepts_root, "Knowledge base topics.", 1, [], [])
         return {"leaves": 0, "layers": 1, "nodes": 1}
 
-    used: set[str] = {n.name for n in leaves}
+    # De-collide topic names against each OTHER only (not against leaf concepts).
+    # A topic sharing a name with a concept (e.g. an "improvisation" area holding
+    # an "improvisation" concept) is natural and unambiguous — resolvers prefer
+    # the concept leaf for a bare stem — so it needs no "-2" suffix. Only two
+    # distinct topics wanting the same name genuinely require disambiguation.
+    used: set[str] = set()
     cap = lambda text: _truncate_words(text, summary_hard_cap)  # noqa: E731
 
     current = leaves

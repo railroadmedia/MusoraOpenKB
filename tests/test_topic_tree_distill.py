@@ -207,6 +207,33 @@ def test_collapse_keeps_topic_with_single_concept_leaf(tmp_path):
     assert (root / tt.TOPIC_FILE).is_file()
 
 
+def test_topic_may_share_name_with_leaf_no_suffix(tmp_path):
+    """A category named the same as an existing concept leaf must keep the clean
+    name (no '-2') — topic/leaf name sharing is allowed and unambiguous."""
+    root = tmp_path / "concepts"
+    stems = _flat(root, 12)  # c000..c011
+
+    def cluster(items):  # name a group exactly like an existing leaf stem
+        half = len(items) // 2
+        return {"c000": [s for s, _ in items[:half]], "rest": [s for s, _ in items[half:]]}
+
+    tt.distill(root, cluster=cluster, summarize=summarize)
+    topic_dirs = {d.name for d in root.rglob("*") if d.is_dir()}
+    assert "c000" in topic_dirs           # topic keeps the clean name
+    assert "c000-2" not in topic_dirs     # no artificial suffix
+    assert _concept_stems(root) == stems  # the c000 concept leaf still exists
+
+
+def test_two_topics_same_name_still_disambiguated(tmp_path):
+    """Topic-vs-topic collisions DO still get a suffix (genuinely ambiguous): the
+    same group names recur across tree levels, so all topic dir names stay unique."""
+    root = tmp_path / "concepts"
+    _flat(root, 40)
+    tt.distill(root, cluster=chunk_cluster(2), summarize=summarize)  # reuses g0/g1 per level
+    names = [d.name for d in root.rglob("*") if d.is_dir()]
+    assert len(names) == len(set(names)), f"topic dir names must be unique: {names}"
+
+
 def test_sideways_disabled_when_no_relate(tmp_path):
     root = tmp_path / "concepts"
     _flat(root, 15)
