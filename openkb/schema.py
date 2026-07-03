@@ -57,24 +57,20 @@ Operations: ingest, query, lint
 - Do not include YAML frontmatter (---) in generated content; it is managed by code.
 
 ## Hierarchy
-Describe how THIS knowledge base should be themed when concepts are distilled
-into a multi-layer pathway hierarchy (`openkb distill`). The text below is
-injected into every category-naming, summarization, and relatedness prompt, so
-edit it to reflect this KB's purpose and what "general vs specific" means here.
-Higher layers should be general, thematic, and encapsulating; leaves are the
-specific facts and concepts.
+<!-- Editing note (this comment is NOT sent to the model): the body of this
+section is injected verbatim into every category-naming, summarization, and
+relatedness prompt used by `openkb distill`. Replace the line below with how THIS
+KB should be themed — higher layers general/thematic/encapsulating, leaves
+specific facts and concepts. Keep it to the theme itself; do not add meta-notes. -->
 
 (Describe the KB's purpose and preferred top-level themes here.)
 
 ## Enrichment
-Guidance for the generative enrichment pass (`openkb enrich`), which authors a
-paired `<concept>.enrich.md` for each grounded concept. The text below is injected
-into every enrichment prompt. Describe the intended audience, tone, and how much
-to add. Two kinds of content are produced and kept separate: grounded
-*elaboration* (strictly derivable from the concept and its links) and *inferred*
-context (the model's own world knowledge, tagged `> [!inferred]` and gated by a
-verification pass). Never contradict the grounded source; the grounded concept
-always wins.
+<!-- Editing note (this comment is NOT sent to the model): the body of this
+section is injected into every `openkb enrich` prompt. Describe the intended
+audience, tone, and depth. Enrichment produces grounded *elaboration* plus
+verify-gated *inferred* context (tagged `> [!inferred]`); the grounded concept
+always wins over inferred additions. Keep the body to the guidance itself. -->
 
 (Describe the audience, tone, and desired depth of enrichment here.)
 """

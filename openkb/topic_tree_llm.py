@@ -6,6 +6,7 @@ stays unit-testable without a network. Production code wires these in.
 from __future__ import annotations
 
 import json
+import re
 
 from openkb.agent.compiler import _JSON_RESPONSE_FORMAT, _llm_call
 from openkb.topic_tree import FANOUT_K, TopicNodeView
@@ -71,8 +72,11 @@ def make_cluster(model: str):
 
 
 _SUMMARIZE = (
-    'Write a one-paragraph summary of the subtopic "{name}" that abstracts '
-    "these concept briefs:\n{briefs}"
+    'Write ONE encapsulating paragraph that summarizes the subtopic "{name}" by '
+    "abstracting the member briefs below. Output ONLY the summary paragraph "
+    "itself: no title, no heading, no preamble, no bullet list, and do not "
+    "repeat, quote, or mention any of these instructions or guidance.\n\n"
+    "Member briefs:\n{briefs}"
 )
 
 
@@ -95,10 +99,11 @@ def make_summarize(model: str):
 # band so layers stay well-sized. See docs/smart-hierarchy-distillation-plan.md.
 # ---------------------------------------------------------------------------
 
-_GUIDANCE_PREFIX = (
-    "This knowledge base is themed as follows — let it steer how you name and "
-    "group categories (general/thematic at the top, specific at the leaves):\n"
-    "{guidance}\n\n"
+_GUIDANCE_SYSTEM = (
+    "You are helping organize a knowledge base with the theme below. Use it ONLY "
+    "as steering for how you name, group, and word things (general/thematic at "
+    "the top, specific at the leaves). Never quote, restate, echo, or mention "
+    "this guidance or these instructions in your output.\n\nKB theme:\n{guidance}"
 )
 
 _DISTILL_CLUSTER = (
@@ -107,7 +112,7 @@ _DISTILL_CLUSTER = (
     "{hi}); each category should be a general theme that encapsulates its members. "
     "Name each category in short kebab-case. Every item stem must appear in "
     'exactly one category. Reply JSON: {{"groups": {{"<kebab-name>": ["<stem>", '
-    '...]}}}}.\n\n{guidance}Items:\n{items}'
+    '...]}}}}.\n\nItems:\n{items}'
 )
 
 _RELATE = (
@@ -115,13 +120,39 @@ _RELATE = (
     "node, list up to {k} OTHER nodes it is most conceptually related to "
     "(cross-links for lateral navigation). Only use the names given; never link "
     'a node to itself. Reply JSON: {{"related": {{"<name>": ["<name>", ...]}}}}.'
-    "\n\n{guidance}Nodes:\n{items}"
+    "\n\nNodes:\n{items}"
 )
 
 
-def _guidance_block(guidance: str | None) -> str:
-    guidance = (guidance or "").strip()
-    return _GUIDANCE_PREFIX.format(guidance=guidance) if guidance else ""
+def _messages(guidance: str | None, user_content: str) -> list[dict]:
+    """Put the KB guidance in a SYSTEM message (steering context) and the task in
+    a USER message, so the model treats guidance as direction, not as content to
+    reproduce (which caused guidance to leak into summaries)."""
+    g = (guidance or "").strip()
+    msgs: list[dict] = []
+    if g:
+        msgs.append({"role": "system", "content": _GUIDANCE_SYSTEM.format(guidance=g)})
+    msgs.append({"role": "user", "content": user_content})
+    return msgs
+
+
+def _clean_summary(text: str) -> str:
+    """Belt-and-suspenders guard against a model prepending guidance/preamble to a
+    free-text summary: if it emitted a horizontal-rule-separated preamble, keep
+    only what follows the last standalone ``---``; then strip any leading heading
+    or bold-label lines."""
+    t = text.strip()
+    parts = re.split(r"(?m)^\s*---\s*$", t)
+    if len(parts) > 1:
+        t = parts[-1]
+    lines = t.strip().splitlines()
+    while lines:
+        s = lines[0].strip()
+        if not s or s.startswith("#") or (s.startswith("**") and s.endswith("**")):
+            lines.pop(0)
+        else:
+            break
+    return "\n".join(lines).strip() or text.strip()
 
 
 def make_distill_cluster(model: str, *, guidance: str = "",
@@ -133,9 +164,8 @@ def make_distill_cluster(model: str, *, guidance: str = "",
         listing = "\n".join(f"- {stem}: {brief}" for stem, brief in items)
         raw = _llm_call(
             model,
-            [{"role": "user", "content": _DISTILL_CLUSTER.format(
-                target=target_fanout, lo=min_fanout, hi=max_fanout,
-                guidance=_guidance_block(guidance), items=listing)}],
+            _messages(guidance, _DISTILL_CLUSTER.format(
+                target=target_fanout, lo=min_fanout, hi=max_fanout, items=listing)),
             "distill-cluster",
             response_format=_JSON_RESPONSE_FORMAT,
         )
@@ -161,11 +191,11 @@ def make_distill_summarize(model: str, *, guidance: str = ""):
     def summarize(name: str, briefs: list[str]) -> str:
         raw = _llm_call(
             model,
-            [{"role": "user", "content": _guidance_block(guidance) + _SUMMARIZE.format(
-                name=name, briefs="\n".join(f"- {b}" for b in briefs))}],
+            _messages(guidance, _SUMMARIZE.format(
+                name=name, briefs="\n".join(f"- {b}" for b in briefs))),
             "distill-summary",
         )
-        return raw.strip()
+        return _clean_summary(raw)
 
     return summarize
 
@@ -176,8 +206,7 @@ def make_relate(model: str, *, guidance: str = "", k: int = 5):
         listing = "\n".join(f"- {name}: {summary}" for name, summary in nodes)
         raw = _llm_call(
             model,
-            [{"role": "user", "content": _RELATE.format(
-                k=k, guidance=_guidance_block(guidance), items=listing)}],
+            _messages(guidance, _RELATE.format(k=k, items=listing)),
             "distill-relate",
             response_format=_JSON_RESPONSE_FORMAT,
         )

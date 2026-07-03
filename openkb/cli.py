@@ -1728,11 +1728,16 @@ def reindex(ctx):
 
 def _agents_section(wiki_dir, heading: str) -> str:
     """Extract a top-level ``## <heading>`` section body from wiki/AGENTS.md (up
-    to the next heading). Falls back to empty so prompts stay generic if unset."""
+    to the next heading) as guidance to inject into prompts. HTML comments
+    (``<!-- ... -->``) are stripped so human-facing editing notes in the template
+    are never sent to the model. Falls back to empty so prompts stay generic."""
     text = get_agents_md(wiki_dir)
     m = re.search(rf"^##\s+{re.escape(heading)}\s*\n(.*?)(?=\n##\s|\Z)",
                   text, re.DOTALL | re.MULTILINE)
-    return m.group(1).strip() if m else ""
+    if not m:
+        return ""
+    body = re.sub(r"<!--.*?-->", "", m.group(1), flags=re.DOTALL)
+    return body.strip()
 
 
 def _hierarchy_guidance(wiki_dir) -> str:
